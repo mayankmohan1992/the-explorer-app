@@ -238,22 +238,22 @@ fun FolderItem(name: String, count: Int, onClick: () -> Unit) {
     ) {
         Box(
             modifier = Modifier
-                .size(60.dp)
-                .clip(RoundedCornerShape(16.dp))
-                .background(Color(0x22FFFFFF)),
+                .size(52.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
             contentAlignment = Alignment.Center
         ) {
             Icon(
                 imageVector = Icons.Default.Folder,
                 contentDescription = name,
-                tint = NeonCyan,
-                modifier = Modifier.size(36.dp)
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(32.dp)
             )
         }
         Spacer(modifier = Modifier.height(6.dp))
         Text(
             text = name,
-            color = TextPrimary,
+            color = MaterialTheme.colorScheme.onBackground,
             fontSize = 12.sp,
             textAlign = TextAlign.Center,
             maxLines = 1,
@@ -261,7 +261,7 @@ fun FolderItem(name: String, count: Int, onClick: () -> Unit) {
         )
         Text(
             text = "$count apps",
-            color = TextSecondary,
+            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f),
             fontSize = 9.sp,
             textAlign = TextAlign.Center
         )
@@ -277,31 +277,36 @@ fun AppIconItem(app: AppInfo, onClick: () -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Box(
-            modifier = Modifier
-                .size(60.dp)
-                .clip(RoundedCornerShape(16.dp))
-                .background(Color(0x11FFFFFF)),
+            modifier = Modifier.size(52.dp),
             contentAlignment = Alignment.Center
         ) {
             if (app.iconBitmap != null) {
                 androidx.compose.foundation.Image(
                     bitmap = app.iconBitmap.asImageBitmap(),
                     contentDescription = app.label,
-                    modifier = Modifier.size(40.dp)
+                    modifier = Modifier.fillMaxSize()
                 )
             } else {
-                Text(
-                    text = app.label.take(1).uppercase(),
-                    color = NeonCyan,
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold
-                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = app.label.take(1).uppercase(),
+                        color = MaterialTheme.colorScheme.primary,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
         }
         Spacer(modifier = Modifier.height(6.dp))
         Text(
             text = app.label,
-            color = TextPrimary,
+            color = MaterialTheme.colorScheme.onBackground,
             fontSize = 11.sp,
             textAlign = TextAlign.Center,
             maxLines = 1,
