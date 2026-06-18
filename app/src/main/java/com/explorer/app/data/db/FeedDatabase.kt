@@ -25,6 +25,28 @@ data class RssArticle(
     val isBookmarked: Boolean = false
 )
 
+@Entity(tableName = "bookmarks")
+data class Bookmark(
+    @PrimaryKey val url: String,
+    val title: String,
+    val dateAdded: Long = System.currentTimeMillis()
+)
+
+@Entity(tableName = "playlists")
+data class Playlist(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val name: String,
+    val dateCreated: Long = System.currentTimeMillis()
+)
+
+@Entity(tableName = "playlist_songs")
+data class PlaylistSong(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val playlistId: Long,
+    val songUri: String,
+    val title: String
+)
+
 @Dao
 interface RssDao {
     @Query("SELECT * FROM rss_sources")
@@ -56,9 +78,52 @@ interface RssDao {
 
     @Query("DELETE FROM rss_articles WHERE sourceUrl = :sourceUrl")
     suspend fun deleteArticlesBySource(sourceUrl: String)
+
+    // Bookmarks operations
+    @Query("SELECT * FROM bookmarks ORDER BY dateAdded DESC")
+    suspend fun getAllBookmarks(): List<Bookmark>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertBookmark(bookmark: Bookmark)
+
+    @Delete
+    suspend fun deleteBookmark(bookmark: Bookmark)
+
+    @Query("SELECT EXISTS(SELECT 1 FROM bookmarks WHERE url = :url)")
+    suspend fun isBookmarked(url: String): Boolean
+
+    // Playlists operations
+    @Query("SELECT * FROM playlists ORDER BY name ASC")
+    suspend fun getAllPlaylists(): List<Playlist>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertPlaylist(playlist: Playlist): Long
+
+    @Delete
+    suspend fun deletePlaylist(playlist: Playlist)
+
+    // Playlist Songs operations
+    @Query("SELECT * FROM playlist_songs WHERE playlistId = :playlistId")
+    suspend fun getSongsForPlaylist(playlistId: Long): List<PlaylistSong>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertPlaylistSong(song: PlaylistSong)
+
+    @Delete
+    suspend fun deletePlaylistSong(song: PlaylistSong)
 }
 
-@Database(entities = [RssSource::class, RssArticle::class], version = 1, exportSchema = false)
+@Database(
+    entities = [
+        RssSource::class,
+        RssArticle::class,
+        Bookmark::class,
+        Playlist::class,
+        PlaylistSong::class
+    ],
+    version = 2,
+    exportSchema = false
+)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun rssDao(): RssDao
 
