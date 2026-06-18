@@ -20,7 +20,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.Extension
-import androidx.compose.material.icons.outlined.Tab
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -218,7 +217,7 @@ fun BrowserTab() {
         // Progress bar for page loads
         if (isLoading) {
             LinearProgressIndicator(
-                progress = { progress / 100f },
+                progress = progress / 100f,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(2.dp),

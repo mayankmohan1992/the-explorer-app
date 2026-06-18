@@ -24,8 +24,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.explorer.app.ui.browser.BrowserTab
 import com.explorer.app.ui.components.GlassmorphicCard
 import com.explorer.app.ui.feeds.FeedsTab
