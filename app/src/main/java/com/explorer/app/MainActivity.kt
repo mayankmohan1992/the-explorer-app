@@ -23,6 +23,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.explorer.app.ui.browser.BrowserTab
 import com.explorer.app.ui.components.GlassmorphicCard
 import com.explorer.app.ui.feeds.FeedsTab
@@ -63,7 +66,7 @@ class MainActivity : ComponentActivity() {
             TheExplorerAppTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
-                    color = DeepSpaceBackground
+                    color = MaterialTheme.colorScheme.background
                 ) {
                     MainNavigationContainer()
                 }
@@ -101,15 +104,14 @@ fun MainNavigationContainer() {
             }
         }
 
-        // Translucent Glassmorphic Bottom Navigation Bar overlay
-        GlassmorphicCard(
+        // Translucent OxygenOS Bottom Navigation Bar overlay
+        Surface(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .height(68.dp)
-                .padding(horizontal = 12.dp, vertical = 6.dp),
-            shape = RoundedCornerShape(20.dp),
-            borderWidth = 1.dp
+                .height(72.dp),
+            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
+            tonalElevation = 8.dp
         ) {
             Row(
                 modifier = Modifier.fillMaxSize(),
@@ -118,7 +120,7 @@ fun MainNavigationContainer() {
             ) {
                 navItems.forEachIndexed { index, item ->
                     val isSelected = pagerState.currentPage == index
-                    val activeColor = if (index == 2) NeonPink else NeonCyan // Feeds & Email gets Pink, others Cyan
+                    val activeColor = MaterialTheme.colorScheme.primary
                     
                     IconButton(
                         onClick = {
@@ -135,14 +137,15 @@ fun MainNavigationContainer() {
                             Icon(
                                 imageVector = item.icon,
                                 contentDescription = item.label,
-                                tint = if (isSelected) activeColor else TextSecondary.copy(alpha = 0.5f),
-                                modifier = Modifier.size(26.dp)
+                                tint = if (isSelected) activeColor else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                                modifier = Modifier.size(24.dp)
                             )
-                            Spacer(modifier = Modifier.height(2.dp))
+                            Spacer(modifier = Modifier.height(4.dp))
                             Text(
                                 text = item.label,
-                                fontSize = 8.sp,
-                                color = if (isSelected) activeColor else TextSecondary.copy(alpha = 0.5f)
+                                fontSize = 10.sp,
+                                color = if (isSelected) activeColor else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
                             )
                         }
                     }
