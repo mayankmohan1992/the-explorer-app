@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Base application theme. -->
+    <style name="Theme.TheExplorerApp" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <!-- Customize your theme here. -->
+        <item name="android:statusBarColor">#0B0D19</item>
+        <item name="android:navigationBarColor">#0B0D19</item>
+        <item name="android:windowBackground">#0B0D19</item>
+    </style>
+</resources>
