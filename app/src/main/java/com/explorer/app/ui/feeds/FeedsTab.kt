@@ -34,6 +34,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import com.explorer.app.data.parser.OpmlParser
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FeedsTab() {
@@ -48,6 +52,63 @@ fun FeedsTab() {
     var showAddFeedDialog by remember { mutableStateOf(false) }
     var selectedArticle by remember { mutableStateOf<RssArticle?>(null) }
     var isRefreshingFeeds by remember { mutableStateOf(false) }
+
+    // Import Launcher
+    val importLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri ->
+        uri?.let {
+            coroutineScope.launch {
+                try {
+                    val content = context.contentResolver.openInputStream(uri)?.use { stream ->
+                        stream.bufferedReader().use { it.readText() }
+                    }
+                    if (content != null) {
+                        val imported = OpmlParser.parseOpml(content)
+                        if (imported.isNotEmpty()) {
+                            withContext(Dispatchers.IO) {
+                                imported.forEach { source ->
+                                    rssDao.insertSource(source)
+                                }
+                                // Auto sync
+                                val sources = rssDao.getAllSources()
+                                sources.forEach { source ->
+                                    try {
+                                        val articles = RssParser.fetchFeed(source.url)
+                                        rssDao.insertArticles(articles)
+                                    } catch (e: Exception) {}
+                                }
+                            }
+                            rssArticles = rssDao.getAllArticles()
+                        }
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+        }
+    }
+
+    // Export Launcher
+    val exportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("text/xml")
+    ) { uri ->
+        uri?.let {
+            coroutineScope.launch {
+                try {
+                    val sources = withContext(Dispatchers.IO) { rssDao.getAllSources() }
+                    val opmlContent = OpmlParser.generateOpml(sources)
+                    withContext(Dispatchers.IO) {
+                        context.contentResolver.openOutputStream(uri)?.use { stream ->
+                            stream.bufferedWriter().use { it.write(opmlContent) }
+                        }
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+        }
+    }
 
     // Email States
     var emails by remember { mutableStateOf(EmailClient.mockEmails) }
@@ -142,6 +203,12 @@ fun FeedsTab() {
                             )
                             IconButton(onClick = { showAddFeedDialog = true }) {
                                 Icon(Icons.Default.Add, contentDescription = "Add Feed", tint = NeonCyan)
+                            }
+                            IconButton(onClick = { importLauncher.launch("*/*") }) {
+                                Icon(Icons.Default.FileDownload, contentDescription = "Import OPML", tint = NeonCyan)
+                            }
+                            IconButton(onClick = { exportLauncher.launch("feeds_export.opml") }) {
+                                Icon(Icons.Default.FileUpload, contentDescription = "Export OPML", tint = NeonCyan)
                             }
                             IconButton(
                                 onClick = {
