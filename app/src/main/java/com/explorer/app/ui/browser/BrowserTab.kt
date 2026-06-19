@@ -52,7 +52,7 @@ data class BrowserTabState(
 
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-fun BrowserTab() {
+fun BrowserTab(onScroll: (isScrollingDown: Boolean) -> Unit = {}) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val db = remember { AppDatabase.getDatabase(context) }
@@ -243,6 +243,15 @@ fun BrowserTab() {
                         settings.domStorageEnabled = true
                         settings.loadWithOverviewMode = true
                         settings.useWideViewPort = true
+                        
+                        setOnScrollChangeListener { _, _, scrollY, _, oldScrollY ->
+                            val dy = scrollY - oldScrollY
+                            if (dy > 5) {
+                                onScroll(true)
+                            } else if (dy < -5) {
+                                onScroll(false)
+                            }
+                        }
                         
                         webViewClient = object : WebViewClient() {
                             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {

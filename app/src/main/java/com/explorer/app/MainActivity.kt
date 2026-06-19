@@ -126,7 +126,9 @@ fun MainNavigationContainer() {
         ) { page ->
             when (page) {
                 0 -> LauncherTab()
-                1 -> BrowserTab()
+                1 -> BrowserTab(onScroll = { isScrollingDown ->
+                    isBottomBarVisible = !isScrollingDown
+                })
                 2 -> FeedsTab()
                 3 -> MediaTab()
                 4 -> ToolsTab()

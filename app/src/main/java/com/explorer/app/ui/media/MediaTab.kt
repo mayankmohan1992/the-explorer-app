@@ -41,6 +41,18 @@ import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
+import android.graphics.Bitmap
+import android.media.MediaMetadataRetriever
+import android.os.Build
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.core.*
+import androidx.compose.ui.draw.rotate
+import androidx.compose.foundation.Image
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.Brush
+import androidx.media3.common.PlaybackParameters
 import com.explorer.app.data.db.AppDatabase
 import com.explorer.app.data.db.Playlist
 import com.explorer.app.data.db.PlaylistSong
@@ -80,8 +92,15 @@ fun MediaTab() {
     // Media Viewer states
     var activeFullscreenList by remember { mutableStateOf<List<MediaFile>>(emptyList()) }
     var activeFullscreenIndex by remember { mutableStateOf(-1) }
-    var selectedVideoUri by remember { mutableStateOf<Uri?>(null) }
+    var selectedVideoFile by remember { mutableStateOf<MediaFile?>(null) }
     var activeAudioFile by remember { mutableStateOf<MediaFile?>(null) }
+
+    // Audio Player Queue States
+    var activeAudioQueue by remember { mutableStateOf<List<MediaFile>>(emptyList()) }
+    var activeAudioIndex by remember { mutableStateOf(-1) }
+    var isAudioPlayerExpanded by remember { mutableStateOf(false) }
+    var isShuffleEnabled by remember { mutableStateOf(false) }
+    var repeatModeState by remember { mutableStateOf(Player.REPEAT_MODE_OFF) }
 
     // Folder Drilldown Dialog state
     var selectedFolderDrilldown by remember { mutableStateOf<String?>(null) }
@@ -101,6 +120,51 @@ fun MediaTab() {
         if (hasPermission) {
             mediaFiles = loadMediaFiles(context, selectedMediaTab)
             playlistsList = withContext(Dispatchers.IO) { rssDao.getAllPlaylists() }
+        }
+    }
+
+    val audioPlayer = remember {
+        ExoPlayer.Builder(context).build()
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            audioPlayer.release()
+        }
+    }
+
+    DisposableEffect(audioPlayer) {
+        val listener = object : Player.Listener {
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == Player.STATE_ENDED) {
+                    if (repeatModeState == Player.REPEAT_MODE_ONE) {
+                        audioPlayer.seekTo(0)
+                        audioPlayer.playWhenReady = true
+                    } else {
+                        val nextIndex = getNextAudioIndex(activeAudioIndex, activeAudioQueue, isShuffleEnabled, repeatModeState)
+                        if (nextIndex != -1) {
+                            activeAudioIndex = nextIndex
+                        }
+                    }
+                }
+            }
+        }
+        audioPlayer.addListener(listener)
+        onDispose {
+            audioPlayer.removeListener(listener)
+        }
+    }
+
+    LaunchedEffect(activeAudioIndex, activeAudioQueue) {
+        val audioFile = activeAudioQueue.getOrNull(activeAudioIndex)
+        if (audioFile != null) {
+            audioPlayer.stop()
+            audioPlayer.setMediaItem(MediaItem.fromUri(audioFile.uri))
+            audioPlayer.prepare()
+            audioPlayer.playWhenReady = true
+            activeAudioFile = audioFile
+        } else {
+            activeAudioFile = null
         }
     }
 
@@ -444,7 +508,7 @@ fun MediaTab() {
                                 horizontalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
                                 items(mediaFiles) { video ->
-                                    VideoCardItem(video = video, onClick = { selectedVideoUri = video.uri })
+                                    VideoCardItem(video = video, onClick = { selectedVideoFile = video })
                                 }
                             }
                         }
@@ -536,8 +600,11 @@ fun MediaTab() {
                                 items(alphabeticalMusic) { audio ->
                                     AudioItemRow(
                                         audio = audio,
-                                        isPlaying = activeAudioFile?.uri == audio.uri,
-                                        onClick = { activeAudioFile = audio },
+                                        isPlaying = activeAudioIndex != -1 && activeAudioQueue.getOrNull(activeAudioIndex)?.uri == audio.uri,
+                                        onClick = {
+                                            activeAudioQueue = alphabeticalMusic
+                                            activeAudioIndex = alphabeticalMusic.indexOf(audio)
+                                        },
                                         onAddToPlaylist = { activeAddSongToPlaylist = audio }
                                     )
                                 }
@@ -557,8 +624,11 @@ fun MediaTab() {
                                 items(recentlyAddedMusic) { audio ->
                                     AudioItemRow(
                                         audio = audio,
-                                        isPlaying = activeAudioFile?.uri == audio.uri,
-                                        onClick = { activeAudioFile = audio },
+                                        isPlaying = activeAudioIndex != -1 && activeAudioQueue.getOrNull(activeAudioIndex)?.uri == audio.uri,
+                                        onClick = {
+                                            activeAudioQueue = recentlyAddedMusic
+                                            activeAudioIndex = recentlyAddedMusic.indexOf(audio)
+                                        },
                                         onAddToPlaylist = { activeAddSongToPlaylist = audio }
                                     )
                                 }
@@ -641,10 +711,11 @@ fun MediaTab() {
     }
 
     // Video playback dialog player
-    selectedVideoUri?.let { uri ->
+    selectedVideoFile?.let { video ->
         VideoPlaybackDialog(
-            videoUri = uri,
-            onDismiss = { selectedVideoUri = null }
+            videoUri = video.uri,
+            videoTitle = video.name,
+            onDismiss = { selectedVideoFile = null }
         )
     }
 
@@ -743,19 +814,23 @@ fun MediaTab() {
                                     .clip(RoundedCornerShape(2.dp))
                                     .clickable {
                                         if (file.isVideo) {
-                                            selectedVideoUri = file.uri
+                                            selectedVideoFile = file
                                         } else {
                                             activeFullscreenList = drilldownFiles.filter { !it.isVideo }
                                             activeFullscreenIndex = activeFullscreenList.indexOf(file)
                                         }
                                     }
                             ) {
-                                AsyncImage(
-                                    model = file.uri,
-                                    contentDescription = file.name,
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier.fillMaxSize()
-                                )
+                                if (file.isVideo) {
+                                    VideoThumbnail(videoUri = file.uri, modifier = Modifier.fillMaxSize())
+                                } else {
+                                    AsyncImage(
+                                        model = file.uri,
+                                        contentDescription = file.name,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                }
                                 if (file.isVideo) {
                                     Box(
                                         modifier = Modifier
@@ -823,11 +898,15 @@ fun MediaTab() {
                                         .clip(RoundedCornerShape(8.dp))
                                         .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
                                         .clickable {
-                                            activeAudioFile = MediaFile(
-                                                uri = Uri.parse(pSong.songUri),
-                                                name = pSong.title,
-                                                isAudio = true
-                                            )
+                                            val playlistQueue = playlistSongsList.map { song ->
+                                                MediaFile(
+                                                    uri = Uri.parse(song.songUri),
+                                                    name = song.title,
+                                                    isAudio = true
+                                                )
+                                            }
+                                            activeAudioQueue = playlistQueue
+                                            activeAudioIndex = playlistQueue.indexOfFirst { it.uri.toString() == pSong.songUri }
                                             selectedPlaylistForViewing = null
                                         }
                                         .padding(12.dp),
@@ -979,12 +1058,97 @@ fun MediaTab() {
         }
     }
 
-    // Audio bottom overlay player sheet
-    activeAudioFile?.let { audio ->
-        AudioOverlayPlayer(
-            audioFile = audio,
-            onClose = { activeAudioFile = null }
+    // Audio bottom overlay player sheet & expanded dialog
+    if (activeAudioIndex != -1 && activeAudioQueue.isNotEmpty()) {
+        val currentAudio = activeAudioQueue.getOrNull(activeAudioIndex)
+        if (currentAudio != null) {
+            AudioOverlayPlayer(
+                audioFile = currentAudio,
+                exoPlayer = audioPlayer,
+                onExpand = { isAudioPlayerExpanded = true },
+                onClose = {
+                    audioPlayer.stop()
+                    activeAudioIndex = -1
+                    activeAudioQueue = emptyList()
+                }
+            )
+
+            if (isAudioPlayerExpanded) {
+                AudioExpandedPlayer(
+                    audioFile = currentAudio,
+                    exoPlayer = audioPlayer,
+                    queue = activeAudioQueue,
+                    activeIndex = activeAudioIndex,
+                    isShuffleEnabled = isShuffleEnabled,
+                    repeatMode = repeatModeState,
+                    onIndexChanged = { activeAudioIndex = it },
+                    onShuffleToggled = { isShuffleEnabled = it },
+                    onRepeatModeChanged = { repeatModeState = it },
+                    onCollapse = { isAudioPlayerExpanded = false },
+                    onClose = {
+                        audioPlayer.stop()
+                        activeAudioIndex = -1
+                        activeAudioQueue = emptyList()
+                        isAudioPlayerExpanded = false
+                    }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun VideoThumbnail(videoUri: Uri, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    var thumbnail by remember(videoUri) { mutableStateOf<Bitmap?>(null) }
+
+    LaunchedEffect(videoUri) {
+        withContext(Dispatchers.IO) {
+            try {
+                if (videoUri.scheme == "http" || videoUri.scheme == "https") {
+                    val retriever = MediaMetadataRetriever()
+                    retriever.setDataSource(videoUri.toString(), HashMap<String, String>())
+                    thumbnail = retriever.frameAtTime
+                    retriever.release()
+                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    try {
+                        thumbnail = context.contentResolver.loadThumbnail(videoUri, android.util.Size(320, 240), null)
+                    } catch (e: Exception) {
+                        val retriever = MediaMetadataRetriever()
+                        retriever.setDataSource(context, videoUri)
+                        thumbnail = retriever.frameAtTime
+                        retriever.release()
+                    }
+                } else {
+                    val retriever = MediaMetadataRetriever()
+                    retriever.setDataSource(context, videoUri)
+                    thumbnail = retriever.frameAtTime
+                    retriever.release()
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    if (thumbnail != null) {
+        Image(
+            bitmap = thumbnail!!.asImageBitmap(),
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = modifier
         )
+    } else {
+        Box(
+            modifier = modifier.background(MaterialTheme.colorScheme.surfaceVariant),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Default.Movie,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+            )
+        }
     }
 }
 
@@ -997,10 +1161,8 @@ fun VideoCardItem(video: MediaFile, onClick: () -> Unit) {
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
-            AsyncImage(
-                model = video.uri,
-                contentDescription = video.name,
-                contentScale = ContentScale.Crop,
+            VideoThumbnail(
+                videoUri = video.uri,
                 modifier = Modifier.fillMaxSize()
             )
             
@@ -1085,9 +1247,17 @@ fun AudioItemRow(audio: MediaFile, isPlaying: Boolean, onClick: () -> Unit, onAd
 }
 
 @Composable
-fun VideoPlaybackDialog(videoUri: Uri, onDismiss: () -> Unit) {
+fun VideoPlaybackDialog(videoUri: Uri, videoTitle: String, onDismiss: () -> Unit) {
     val context = LocalContext.current
-    val exoPlayer = remember {
+    var isPlayingState by remember { mutableStateOf(true) }
+    var currentPosition by remember { mutableStateOf(0L) }
+    var totalDuration by remember { mutableStateOf(0L) }
+    var showControls by remember { mutableStateOf(true) }
+    var playbackSpeed by remember { mutableStateOf(1.0f) }
+    var volume by remember { mutableStateOf(1.0f) }
+    var isLocked by remember { mutableStateOf(false) }
+
+    val exoPlayer = remember(videoUri) {
         ExoPlayer.Builder(context).build().apply {
             setMediaItem(MediaItem.fromUri(videoUri))
             prepare()
@@ -1095,8 +1265,35 @@ fun VideoPlaybackDialog(videoUri: Uri, onDismiss: () -> Unit) {
         }
     }
 
-    DisposableEffect(Unit) {
+    LaunchedEffect(exoPlayer, isPlayingState) {
+        while (true) {
+            currentPosition = exoPlayer.currentPosition
+            totalDuration = exoPlayer.duration
+            kotlinx.coroutines.delay(500)
+        }
+    }
+
+    LaunchedEffect(showControls, isPlayingState) {
+        if (showControls && isPlayingState) {
+            kotlinx.coroutines.delay(3000)
+            showControls = false
+        }
+    }
+
+    DisposableEffect(videoUri) {
+        val listener = object : Player.Listener {
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                isPlayingState = isPlaying
+            }
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == Player.STATE_READY) {
+                    totalDuration = exoPlayer.duration
+                }
+            }
+        }
+        exoPlayer.addListener(listener)
         onDispose {
+            exoPlayer.removeListener(listener)
             exoPlayer.release()
         }
     }
@@ -1108,14 +1305,14 @@ fun VideoPlaybackDialog(videoUri: Uri, onDismiss: () -> Unit) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black),
-            contentAlignment = Alignment.Center
+                .background(Color.Black)
+                .clickable { if (!isLocked) showControls = !showControls }
         ) {
             AndroidView(
                 factory = { ctx ->
                     PlayerView(ctx).apply {
                         player = exoPlayer
-                        useController = true
+                        useController = false
                         layoutParams = FrameLayout.LayoutParams(
                             ViewGroup.LayoutParams.MATCH_PARENT,
                             ViewGroup.LayoutParams.MATCH_PARENT
@@ -1125,108 +1322,798 @@ fun VideoPlaybackDialog(videoUri: Uri, onDismiss: () -> Unit) {
                 modifier = Modifier.fillMaxSize()
             )
 
-            IconButton(
-                onClick = onDismiss,
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(16.dp)
+            androidx.compose.animation.AnimatedVisibility(
+                visible = showControls,
+                enter = androidx.compose.animation.fadeIn(),
+                exit = androidx.compose.animation.fadeOut()
             ) {
-                Icon(Icons.Default.Close, contentDescription = "Close Player", tint = Color.White)
+                if (isLocked) {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.CenterStart
+                    ) {
+                        IconButton(
+                            onClick = { isLocked = false },
+                            modifier = Modifier
+                                .padding(24.dp)
+                                .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(12.dp))
+                        ) {
+                            Icon(Icons.Default.Lock, contentDescription = "Unlock Controls", tint = Color(0xFFFF8800))
+                        }
+                    }
+                } else {
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.8f), Color.Transparent)))
+                                .padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            IconButton(onClick = onDismiss) {
+                                Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = Color.White)
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = videoTitle,
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 16.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+                            
+                            TextButton(
+                                onClick = {
+                                    playbackSpeed = when (playbackSpeed) {
+                                        1.0f -> 1.5f
+                                        1.5f -> 2.0f
+                                        2.0f -> 0.5f
+                                        else -> 1.0f
+                                    }
+                                    exoPlayer.playbackParameters = PlaybackParameters(playbackSpeed)
+                                },
+                                colors = ButtonDefaults.textButtonColors(contentColor = Color(0xFFFF8800))
+                            ) {
+                                Text("${playbackSpeed}x", fontWeight = FontWeight.Bold)
+                            }
+                        }
+
+                        Row(
+                            modifier = Modifier.align(Alignment.Center),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(32.dp)
+                        ) {
+                            IconButton(
+                                onClick = { exoPlayer.seekTo((currentPosition - 10000).coerceAtLeast(0L)) },
+                                modifier = Modifier
+                                    .size(56.dp)
+                                    .background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(28.dp))
+                            ) {
+                                Icon(Icons.Default.FastRewind, contentDescription = "Rewind 10s", tint = Color.White, modifier = Modifier.size(32.dp))
+                            }
+
+                            IconButton(
+                                onClick = { if (isPlayingState) exoPlayer.pause() else exoPlayer.play() },
+                                modifier = Modifier
+                                    .size(72.dp)
+                                    .background(Color(0xFFFF8800), RoundedCornerShape(36.dp))
+                            ) {
+                                Icon(
+                                    imageVector = if (isPlayingState) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                    contentDescription = "Play/Pause",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(40.dp)
+                                )
+                            }
+
+                            IconButton(
+                                onClick = { exoPlayer.seekTo((currentPosition + 10000).coerceAtMost(totalDuration)) },
+                                modifier = Modifier
+                                    .size(56.dp)
+                                    .background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(28.dp))
+                            ) {
+                                Icon(Icons.Default.FastForward, contentDescription = "Forward 10s", tint = Color.White, modifier = Modifier.size(32.dp))
+                            }
+                        }
+
+                        Column(
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.8f))))
+                                .padding(16.dp)
+                        ) {
+                            Slider(
+                                value = currentPosition.toFloat(),
+                                onValueChange = { newPos ->
+                                    currentPosition = newPos.toLong()
+                                    exoPlayer.seekTo(currentPosition)
+                                },
+                                valueRange = 0f..totalDuration.toFloat().coerceAtLeast(1f),
+                                colors = SliderDefaults.colors(
+                                    thumbColor = Color(0xFFFF8800),
+                                    activeTrackColor = Color(0xFFFF8800),
+                                    inactiveTrackColor = Color.White.copy(alpha = 0.3f)
+                                )
+                            )
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "${formatDuration(currentPosition)} / ${formatDuration(totalDuration)}",
+                                    color = Color.White,
+                                    fontSize = 12.sp
+                                )
+
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(16.dp)
+                                ) {
+                                    IconButton(onClick = { isLocked = true }) {
+                                        Icon(Icons.Default.LockOpen, contentDescription = "Lock Controls", tint = Color.White)
+                                    }
+
+                                    IconButton(
+                                        onClick = {
+                                            volume = if (volume > 0f) 0f else 1.0f
+                                            exoPlayer.volume = volume
+                                        }
+                                    ) {
+                                        Icon(
+                                            imageVector = if (volume > 0f) Icons.Default.VolumeUp else Icons.Default.VolumeOff,
+                                            contentDescription = "Mute/Unmute",
+                                            tint = Color.White
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
 }
 
 @Composable
-fun AudioOverlayPlayer(audioFile: MediaFile, onClose: () -> Unit) {
-    val context = LocalContext.current
-    var isPlayingState by remember { mutableStateOf(true) }
-    
-    val exoPlayer = remember(audioFile.uri) {
-        ExoPlayer.Builder(context).build().apply {
-            setMediaItem(MediaItem.fromUri(audioFile.uri))
-            prepare()
-            playWhenReady = true
-        }
-    }
+fun AudioOverlayPlayer(
+    audioFile: MediaFile,
+    exoPlayer: ExoPlayer,
+    onExpand: () -> Unit,
+    onClose: () -> Unit
+) {
+    var isPlayingState by remember { mutableStateOf(exoPlayer.isPlaying) }
+    var currentPosition by remember { mutableStateOf(exoPlayer.currentPosition) }
+    var totalDuration by remember { mutableStateOf(exoPlayer.duration) }
 
-    DisposableEffect(audioFile.uri) {
+    DisposableEffect(exoPlayer, audioFile.uri) {
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 isPlayingState = isPlaying
             }
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == Player.STATE_READY) {
+                    totalDuration = exoPlayer.duration
+                }
+            }
         }
         exoPlayer.addListener(listener)
+        isPlayingState = exoPlayer.isPlaying
+        totalDuration = exoPlayer.duration
         onDispose {
             exoPlayer.removeListener(listener)
-            exoPlayer.release()
+        }
+    }
+
+    LaunchedEffect(exoPlayer, isPlayingState, audioFile.uri) {
+        while (isPlayingState) {
+            currentPosition = exoPlayer.currentPosition
+            totalDuration = exoPlayer.duration
+            kotlinx.coroutines.delay(500)
         }
     }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .padding(bottom = 76.dp), // Float above bottom bar
+            .padding(bottom = 76.dp),
         contentAlignment = Alignment.BottomCenter
     ) {
-        Surface(
+        Card(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(68.dp)
-                .padding(horizontal = 8.dp),
+                .height(72.dp)
+                .padding(horizontal = 8.dp)
+                .clickable(onClick = onExpand),
             shape = RoundedCornerShape(16.dp),
-            color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 8.dp
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            elevation = CardDefaults.cardElevation(8.dp)
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 16.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(onClick = onClose) {
-                    Icon(Icons.Default.Close, contentDescription = "Close", tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
-                }
-                
-                Column(
+            Column(modifier = Modifier.fillMaxSize()) {
+                val progressPercent = if (totalDuration > 0) currentPosition.toFloat() / totalDuration.toFloat() else 0f
+                LinearProgressIndicator(
+                    progress = progressPercent.coerceIn(0f, 1f),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(3.dp),
+                    color = Color(0xFFFF8800),
+                    trackColor = Color.Transparent
+                )
+
+                Row(
                     modifier = Modifier
                         .weight(1f)
-                        .padding(horizontal = 8.dp)
+                        .padding(horizontal = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = audioFile.name,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 13.sp,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text = "Now Playing",
-                        fontSize = 10.sp,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-
-                IconButton(
-                    onClick = {
-                        if (isPlayingState) {
-                            exoPlayer.pause()
-                        } else {
-                            exoPlayer.play()
-                        }
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xFFFF8800).copy(alpha = 0.1f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.MusicNote,
+                            contentDescription = null,
+                            tint = Color(0xFFFF8800),
+                            modifier = Modifier.size(24.dp)
+                        )
                     }
-                ) {
-                    Icon(
-                        imageVector = if (isPlayingState) Icons.Default.PauseCircle else Icons.Default.PlayCircle,
-                        contentDescription = "Play/Pause",
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(36.dp)
-                    )
+
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(horizontal = 12.dp)
+                    ) {
+                        Text(
+                            text = audioFile.name,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = "Now Playing",
+                            fontSize = 10.sp,
+                            color = Color(0xFFFF8800)
+                        )
+                    }
+
+                    IconButton(
+                        onClick = {
+                            if (isPlayingState) {
+                                exoPlayer.pause()
+                            } else {
+                                exoPlayer.play()
+                            }
+                        }
+                    ) {
+                        Icon(
+                            imageVector = if (isPlayingState) Icons.Default.PauseCircle else Icons.Default.PlayCircle,
+                            contentDescription = "Play/Pause",
+                            tint = Color(0xFFFF8800),
+                            modifier = Modifier.size(36.dp)
+                        )
+                    }
+
+                    IconButton(onClick = onClose) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Close",
+                            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                        )
+                    }
                 }
             }
         }
     }
+}
+
+@Composable
+fun AudioExpandedPlayer(
+    audioFile: MediaFile,
+    exoPlayer: ExoPlayer,
+    queue: List<MediaFile>,
+    activeIndex: Int,
+    isShuffleEnabled: Boolean,
+    repeatMode: Int,
+    onIndexChanged: (Int) -> Unit,
+    onShuffleToggled: (Boolean) -> Unit,
+    onRepeatModeChanged: (Int) -> Unit,
+    onCollapse: () -> Unit,
+    onClose: () -> Unit
+) {
+    var isPlayingState by remember { mutableStateOf(exoPlayer.isPlaying) }
+    var currentPosition by remember { mutableStateOf(exoPlayer.currentPosition) }
+    var totalDuration by remember { mutableStateOf(exoPlayer.duration) }
+    var playbackSpeed by remember { mutableStateOf(1.0f) }
+    var volume by remember { mutableStateOf(exoPlayer.volume) }
+    var showQueueList by remember { mutableStateOf(false) }
+
+    DisposableEffect(exoPlayer, audioFile.uri) {
+        val listener = object : Player.Listener {
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                isPlayingState = isPlaying
+            }
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == Player.STATE_READY) {
+                    totalDuration = exoPlayer.duration
+                }
+            }
+        }
+        exoPlayer.addListener(listener)
+        isPlayingState = exoPlayer.isPlaying
+        totalDuration = exoPlayer.duration
+        onDispose {
+            exoPlayer.removeListener(listener)
+        }
+    }
+
+    LaunchedEffect(exoPlayer, isPlayingState, audioFile.uri) {
+        while (true) {
+            currentPosition = exoPlayer.currentPosition
+            totalDuration = exoPlayer.duration
+            kotlinx.coroutines.delay(250)
+        }
+    }
+
+    val infiniteTransition = rememberInfiniteTransition(label = "rotation")
+    val rotation by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(8000, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "rotation"
+    )
+
+    Dialog(
+        onDismissRequest = onCollapse,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = Color(0xFF121212)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = onCollapse) {
+                        Icon(
+                            imageVector = Icons.Default.ArrowBack,
+                            contentDescription = "Collapse",
+                            tint = Color.White,
+                            modifier = Modifier.size(28.dp)
+                        )
+                    }
+                    
+                    Text(
+                        text = "NOW PLAYING",
+                        color = Color.White.copy(alpha = 0.6f),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    IconButton(onClick = { showQueueList = !showQueueList }) {
+                        Icon(
+                            imageVector = Icons.Default.QueueMusic,
+                            contentDescription = "Play Queue",
+                            tint = if (showQueueList) Color(0xFFFF8800) else Color.White,
+                            modifier = Modifier.size(28.dp)
+                        )
+                    }
+                }
+
+                if (showQueueList) {
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                            .padding(vertical = 16.dp)
+                    ) {
+                        Text(
+                            text = "Play Queue (${queue.size} songs)",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp,
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        )
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            items(queue.size) { idx ->
+                                val song = queue[idx]
+                                val isActive = idx == activeIndex
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(
+                                            if (isActive) Color(0xFFFF8800).copy(alpha = 0.2f)
+                                            else Color.White.copy(alpha = 0.05f)
+                                        )
+                                        .clickable { onIndexChanged(idx) }
+                                        .padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = if (isActive) Icons.Default.VolumeUp else Icons.Default.MusicNote,
+                                        contentDescription = null,
+                                        tint = if (isActive) Color(0xFFFF8800) else Color.White.copy(alpha = 0.5f)
+                                    )
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Text(
+                                        text = song.name,
+                                        color = if (isActive) Color(0xFFFF8800) else Color.White,
+                                        fontSize = 13.sp,
+                                        fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(240.dp)
+                                .clip(RoundedCornerShape(120.dp))
+                                .background(
+                                    androidx.compose.ui.graphics.Brush.radialGradient(
+                                        colors = listOf(
+                                            Color(0xFFFF8800).copy(alpha = 0.2f),
+                                            Color.Transparent
+                                        )
+                                    )
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(200.dp)
+                                    .rotate(if (isPlayingState) rotation else 0f)
+                                    .clip(RoundedCornerShape(100.dp))
+                                    .background(Color(0xFF1E1E1E))
+                                    .border(4.dp, Color(0xFF333333), RoundedCornerShape(100.dp)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(150.dp)
+                                        .clip(RoundedCornerShape(75.dp))
+                                        .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(75.dp))
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .size(100.dp)
+                                        .clip(RoundedCornerShape(50.dp))
+                                        .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(50.dp))
+                                )
+                                
+                                Box(
+                                    modifier = Modifier
+                                        .size(60.dp)
+                                        .clip(RoundedCornerShape(30.dp))
+                                        .background(Color(0xFFFF8800)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.MusicNote,
+                                        contentDescription = null,
+                                        tint = Color.White,
+                                        modifier = Modifier.size(28.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = audioFile.name,
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 18.sp,
+                        textAlign = TextAlign.Center,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(horizontal = 16.dp)
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "VLC Media Stream • Local Audio",
+                        color = Color.White.copy(alpha = 0.5f),
+                        fontSize = 12.sp
+                    )
+                }
+
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Slider(
+                        value = currentPosition.toFloat(),
+                        onValueChange = { newPos ->
+                            currentPosition = newPos.toLong()
+                            exoPlayer.seekTo(currentPosition)
+                        },
+                        valueRange = 0f..totalDuration.toFloat().coerceAtLeast(1f),
+                        colors = SliderDefaults.colors(
+                            thumbColor = Color(0xFFFF8800),
+                            activeTrackColor = Color(0xFFFF8800),
+                            inactiveTrackColor = Color.White.copy(alpha = 0.2f)
+                        )
+                    )
+                    
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = formatDuration(currentPosition),
+                            color = Color.White.copy(alpha = 0.6f),
+                            fontSize = 11.sp
+                        )
+                        Text(
+                            text = formatDuration(totalDuration),
+                            color = Color.White.copy(alpha = 0.6f),
+                            fontSize = 11.sp
+                        )
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(
+                        onClick = { onShuffleToggled(!isShuffleEnabled) }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Shuffle,
+                            contentDescription = "Shuffle",
+                            tint = if (isShuffleEnabled) Color(0xFFFF8800) else Color.White.copy(alpha = 0.4f)
+                        )
+                    }
+
+                    IconButton(
+                        onClick = {
+                            val prevIndex = getPreviousAudioIndex(activeIndex, queue, isShuffleEnabled, repeatMode)
+                            if (prevIndex != -1) onIndexChanged(prevIndex)
+                        },
+                        enabled = isShuffleEnabled || activeIndex > 0 || repeatMode == Player.REPEAT_MODE_ALL
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.SkipPrevious,
+                            contentDescription = "Previous",
+                            tint = if (isShuffleEnabled || activeIndex > 0 || repeatMode == Player.REPEAT_MODE_ALL) Color.White else Color.White.copy(alpha = 0.2f)
+                        )
+                    }
+
+                    IconButton(onClick = { exoPlayer.seekTo((currentPosition - 10000).coerceAtLeast(0L)) }) {
+                        Icon(
+                            imageVector = Icons.Default.FastRewind,
+                            contentDescription = "Rewind 10s",
+                            tint = Color.White
+                        )
+                    }
+
+                    IconButton(
+                        onClick = {
+                            if (isPlayingState) exoPlayer.pause() else exoPlayer.play()
+                        },
+                        modifier = Modifier
+                            .size(72.dp)
+                            .clip(RoundedCornerShape(36.dp))
+                            .background(Color(0xFFFF8800))
+                    ) {
+                        Icon(
+                            imageVector = if (isPlayingState) Icons.Default.Pause else Icons.Default.PlayArrow,
+                            contentDescription = "Play/Pause",
+                            tint = Color.White,
+                            modifier = Modifier.size(36.dp)
+                        )
+                    }
+
+                    IconButton(onClick = { exoPlayer.seekTo((currentPosition + 10000).coerceAtMost(totalDuration)) }) {
+                        Icon(
+                            imageVector = Icons.Default.FastForward,
+                            contentDescription = "Fast Forward 10s",
+                            tint = Color.White
+                        )
+                    }
+
+                    IconButton(
+                        onClick = {
+                            val nextIndex = getNextAudioIndex(activeIndex, queue, isShuffleEnabled, repeatMode)
+                            if (nextIndex != -1) onIndexChanged(nextIndex)
+                        },
+                        enabled = isShuffleEnabled || activeIndex < queue.lastIndex || repeatMode == Player.REPEAT_MODE_ALL
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.SkipNext,
+                            contentDescription = "Next",
+                            tint = if (isShuffleEnabled || activeIndex < queue.lastIndex || repeatMode == Player.REPEAT_MODE_ALL) Color.White else Color.White.copy(alpha = 0.2f)
+                        )
+                    }
+
+                    IconButton(
+                        onClick = {
+                            val nextMode = when (repeatMode) {
+                                Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL
+                                Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE
+                                else -> Player.REPEAT_MODE_OFF
+                            }
+                            onRepeatModeChanged(nextMode)
+                        }
+                    ) {
+                        Box(contentAlignment = Alignment.BottomEnd) {
+                            Icon(
+                                imageVector = Icons.Default.Repeat,
+                                contentDescription = "Repeat",
+                                tint = if (repeatMode != Player.REPEAT_MODE_OFF) Color(0xFFFF8800) else Color.White.copy(alpha = 0.4f)
+                            )
+                            if (repeatMode == Player.REPEAT_MODE_ONE) {
+                                Text(
+                                    text = "1",
+                                    color = Color(0xFFFF8800),
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier
+                                        .background(Color.Black, RoundedCornerShape(2.dp))
+                                        .padding(horizontal = 2.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = if (volume > 0f) Icons.Default.VolumeUp else Icons.Default.VolumeOff,
+                            contentDescription = "Volume",
+                            tint = Color.White.copy(alpha = 0.6f),
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Slider(
+                            value = volume,
+                            onValueChange = {
+                                volume = it
+                                exoPlayer.volume = it
+                            },
+                            valueRange = 0f..1f,
+                            colors = SliderDefaults.colors(
+                                thumbColor = Color.White,
+                                activeTrackColor = Color.White.copy(alpha = 0.6f),
+                                inactiveTrackColor = Color.White.copy(alpha = 0.2f)
+                            ),
+                            modifier = Modifier.weight(1f)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "${(volume * 100).toInt()}%",
+                            color = Color.White.copy(alpha = 0.6f),
+                            fontSize = 11.sp,
+                            modifier = Modifier.width(32.dp)
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "Playback Speed:",
+                            color = Color.White.copy(alpha = 0.5f),
+                            fontSize = 12.sp
+                        )
+
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            val speeds = listOf(0.5f, 1.0f, 1.25f, 1.5f, 2.0f)
+                            speeds.forEach { speed ->
+                                val isSelected = playbackSpeed == speed
+                                Text(
+                                    text = "${speed}x",
+                                    color = if (isSelected) Color(0xFFFF8800) else Color.White.copy(alpha = 0.5f),
+                                    fontSize = 11.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(4.dp))
+                                        .background(if (isSelected) Color(0xFFFF8800).copy(alpha = 0.15f) else Color.Transparent)
+                                        .clickable {
+                                            playbackSpeed = speed
+                                            exoPlayer.playbackParameters = PlaybackParameters(speed)
+                                        }
+                                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun getNextAudioIndex(
+    currentIndex: Int,
+    queue: List<MediaFile>,
+    shuffle: Boolean,
+    repeatMode: Int
+): Int {
+    if (queue.isEmpty()) return -1
+    if (shuffle) {
+        return (queue.indices).random()
+    }
+    if (currentIndex < queue.lastIndex) {
+        return currentIndex + 1
+    }
+    if (repeatMode == Player.REPEAT_MODE_ALL) {
+        return 0
+    }
+    return -1
+}
+
+private fun getPreviousAudioIndex(
+    currentIndex: Int,
+    queue: List<MediaFile>,
+    shuffle: Boolean,
+    repeatMode: Int
+): Int {
+    if (queue.isEmpty()) return -1
+    if (shuffle) {
+        return (queue.indices).random()
+    }
+    if (currentIndex > 0) {
+        return currentIndex - 1
+    }
+    if (repeatMode == Player.REPEAT_MODE_ALL) {
+        return queue.lastIndex
+    }
+    return -1
 }
 
 private fun checkMediaPermissions(context: Context): Boolean {
