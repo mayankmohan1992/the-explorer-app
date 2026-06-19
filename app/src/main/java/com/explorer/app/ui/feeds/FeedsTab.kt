@@ -33,6 +33,8 @@ import com.explorer.app.ui.theme.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.delay
+import androidx.compose.ui.layout.ContentScale
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -49,6 +51,10 @@ fun FeedsTab() {
 
     // RSS Feed States
     var rssArticles by remember { mutableStateOf<List<RssArticle>>(emptyList()) }
+    var rssSources by remember { mutableStateOf<List<RssSource>>(emptyList()) }
+    var activeCategoryFilter by remember { mutableStateOf<String?>(null) }
+    var activeSourceFilter by remember { mutableStateOf<String?>(null) }
+    var showFoldersBottomSheet by remember { mutableStateOf(false) }
     var showAddFeedDialog by remember { mutableStateOf(false) }
     var selectedArticle by remember { mutableStateOf<RssArticle?>(null) }
     var isRefreshingFeeds by remember { mutableStateOf(false) }
@@ -78,6 +84,7 @@ fun FeedsTab() {
                                         rssDao.insertArticles(articles)
                                     } catch (e: Exception) {}
                                 }
+                                rssSources = sources
                             }
                             rssArticles = rssDao.getAllArticles()
                         }
@@ -127,12 +134,14 @@ fun FeedsTab() {
     // Initial feed cache load and seed
     LaunchedEffect(Unit) {
         coroutineScope.launch {
-            val sources = rssDao.getAllSources()
+            var sources = rssDao.getAllSources()
             if (sources.isEmpty()) {
-                // Seed default feeds
-                rssDao.insertSource(RssSource("https://news.ycombinator.com/rss", "Hacker News"))
-                rssDao.insertSource(RssSource("https://feeds.feedburner.com/TechCrunch/", "TechCrunch"))
+                // Seed default feeds with categories
+                rssDao.insertSource(RssSource("https://news.ycombinator.com/rss", "Hacker News", "News"))
+                rssDao.insertSource(RssSource("https://feeds.feedburner.com/TechCrunch/", "TechCrunch", "Tech"))
+                sources = rssDao.getAllSources()
             }
+            rssSources = sources
             rssArticles = rssDao.getAllArticles()
         }
     }
@@ -201,6 +210,9 @@ fun FeedsTab() {
                                 color = NeonCyan,
                                 modifier = Modifier.weight(1f)
                             )
+                            IconButton(onClick = { showFoldersBottomSheet = true }) {
+                                Icon(Icons.Default.Folder, contentDescription = "Folders", tint = NeonCyan)
+                            }
                             IconButton(onClick = { showAddFeedDialog = true }) {
                                 Icon(Icons.Default.Add, contentDescription = "Add Feed", tint = NeonCyan)
                             }
@@ -246,14 +258,72 @@ fun FeedsTab() {
                             )
                         }
 
-                        if (rssArticles.isEmpty()) {
+                        // Filter the RSS articles list
+                        val filteredArticles = remember(rssArticles, activeCategoryFilter, activeSourceFilter, rssSources) {
+                            when {
+                                activeSourceFilter != null -> {
+                                    rssArticles.filter { it.sourceUrl == activeSourceFilter }
+                                }
+                                activeCategoryFilter != null -> {
+                                    val urls = rssSources.filter { it.category == activeCategoryFilter }.map { it.url }.toSet()
+                                    rssArticles.filter { it.sourceUrl in urls }
+                                }
+                                else -> rssArticles
+                            }
+                        }
+
+                        // Active Filter indicator
+                        if (activeCategoryFilter != null || activeSourceFilter != null) {
+                            val displayText = when {
+                                activeCategoryFilter != null -> "Folder: $activeCategoryFilter"
+                                activeSourceFilter != null -> {
+                                    val title = rssSources.find { it.url == activeSourceFilter }?.title ?: "Feed"
+                                    "Feed: $title"
+                                }
+                                else -> ""
+                            }
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                InputChip(
+                                    selected = true,
+                                    onClick = {
+                                        activeCategoryFilter = null
+                                        activeSourceFilter = null
+                                    },
+                                    label = { Text(displayText) },
+                                    trailingIcon = {
+                                        Icon(
+                                            imageVector = Icons.Default.Close,
+                                            contentDescription = "Clear filter",
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    },
+                                    colors = InputChipDefaults.inputChipColors(
+                                        selectedContainerColor = NeonCyan.copy(alpha = 0.2f),
+                                        selectedLabelColor = NeonCyan,
+                                        selectedTrailingIconColor = NeonCyan
+                                    )
+                                )
+                            }
+                        }
+
+                        if (filteredArticles.isEmpty()) {
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .weight(1f),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text("No articles cached. Tap refresh to sync.", color = TextSecondary)
+                                val emptyText = if (activeCategoryFilter != null || activeSourceFilter != null) {
+                                    "No articles match this filter."
+                                } else {
+                                    "No articles cached. Tap refresh to sync."
+                                }
+                                Text(emptyText, color = TextSecondary)
                             }
                         } else {
                             LazyColumn(
@@ -263,7 +333,7 @@ fun FeedsTab() {
                                 contentPadding = PaddingValues(bottom = 80.dp),
                                 verticalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
-                                items(rssArticles) { article ->
+                                items(filteredArticles) { article ->
                                     RssArticleCard(
                                         article = article,
                                         onClick = {
@@ -432,6 +502,7 @@ fun FeedsTab() {
     if (showAddFeedDialog) {
         var newFeedUrl by remember { mutableStateOf("") }
         var newFeedTitle by remember { mutableStateOf("") }
+        var newFeedCategory by remember { mutableStateOf("") }
         Dialog(onDismissRequest = { showAddFeedDialog = false }) {
             GlassmorphicCard(modifier = Modifier.padding(16.dp)) {
                 Column(modifier = Modifier.padding(16.dp)) {
@@ -448,6 +519,12 @@ fun FeedsTab() {
                         onValueChange = { newFeedUrl = it },
                         label = { Text("Feed XML URL") }
                     )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = newFeedCategory,
+                        onValueChange = { newFeedCategory = it },
+                        label = { Text("Category / Folder (optional)") }
+                    )
                     Spacer(modifier = Modifier.height(16.dp))
                     Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
                         TextButton(onClick = { showAddFeedDialog = false }) { Text("Cancel") }
@@ -456,7 +533,9 @@ fun FeedsTab() {
                                 if (newFeedUrl.isNotEmpty()) {
                                     coroutineScope.launch {
                                         val title = newFeedTitle.ifEmpty { "Custom Feed" }
-                                        rssDao.insertSource(RssSource(newFeedUrl, title))
+                                        val cat = newFeedCategory.trim().ifEmpty { null }
+                                        rssDao.insertSource(RssSource(newFeedUrl, title, cat))
+                                        rssSources = rssDao.getAllSources()
                                         showAddFeedDialog = false
                                         // Auto-sync new feed
                                         try {
@@ -477,50 +556,272 @@ fun FeedsTab() {
         }
     }
 
-    // Read RSS Article full details dialog
-    selectedArticle?.let { article ->
-        Dialog(onDismissRequest = { selectedArticle = null }) {
-            GlassmorphicCard(
+    // Folders bottom sheet drawer for filtering feeds
+    if (showFoldersBottomSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showFoldersBottomSheet = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.98f),
+            tonalElevation = 8.dp
+        ) {
+            Column(
                 modifier = Modifier
-                    .fillMaxWidth(0.95f)
-                    .fillMaxHeight(0.8f)
-                    .padding(8.dp)
+                    .fillMaxWidth()
+                    .padding(16.dp)
+                    .navigationBarsPadding()
             ) {
-                Column(
+                Text(
+                    "FILTER BY FOLDERS",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp,
+                    color = NeonCyan,
+                    modifier = Modifier.padding(bottom = 16.dp)
+                )
+                
+                LazyColumn(
                     modifier = Modifier
-                        .fillMaxSize()
-                        .padding(16.dp)
+                        .fillMaxWidth()
+                        .heightIn(max = 400.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text(article.title, fontWeight = FontWeight.Bold, fontSize = 18.sp, color = TextPrimary)
-                    Text(article.pubDate, fontSize = 11.sp, color = TextSecondary, modifier = Modifier.padding(vertical = 4.dp))
-                    
-                    if (article.imageUrl != null) {
-                        AsyncImage(
-                            model = article.imageUrl,
-                            contentDescription = "Image preview",
+                    item {
+                        // "All Feeds" item
+                        Surface(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(160.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .padding(vertical = 8.dp)
-                        )
-                    }
-                    Divider(color = TextSecondary.copy(alpha = 0.2f), modifier = Modifier.padding(vertical = 8.dp))
-                    
-                    Box(modifier = Modifier.weight(1f)) {
-                        LazyColumn {
-                            item {
-                                Text(article.description, fontSize = 14.sp, color = TextPrimary, lineHeight = 20.sp)
+                                .clickable {
+                                    activeCategoryFilter = null
+                                    activeSourceFilter = null
+                                    showFoldersBottomSheet = false
+                                },
+                            color = if (activeCategoryFilter == null && activeSourceFilter == null) {
+                                MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                            } else Color.Transparent,
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Default.List, contentDescription = null, tint = NeonCyan)
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Text("All Feeds", fontWeight = FontWeight.SemiBold, color = TextPrimary)
                             }
                         }
                     }
                     
-                    Button(
-                        onClick = { selectedArticle = null },
-                        modifier = Modifier.align(Alignment.End),
-                        colors = ButtonDefaults.buttonColors(containerColor = NeonCyan)
+                    // Group sources by category
+                    val categorized = rssSources.groupBy { it.category }
+                    
+                    categorized.forEach { (category, sources) ->
+                        if (!category.isNullOrEmpty()) {
+                            item {
+                                // Folder Item
+                                var isExpanded by remember { mutableStateOf(false) }
+                                Column {
+                                    Surface(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable {
+                                                activeCategoryFilter = if (activeCategoryFilter == category) null else category
+                                                activeSourceFilter = null
+                                                isExpanded = !isExpanded
+                                            },
+                                        color = if (activeCategoryFilter == category) {
+                                            MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                                        } else Color.Transparent,
+                                        shape = RoundedCornerShape(12.dp)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(12.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(
+                                                imageVector = if (isExpanded) Icons.Default.FolderOpen else Icons.Default.Folder,
+                                                contentDescription = null,
+                                                tint = NeonCyan
+                                            )
+                                            Spacer(modifier = Modifier.width(12.dp))
+                                            Text(
+                                                category,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = TextPrimary,
+                                                modifier = Modifier.weight(1f)
+                                            )
+                                            IconButton(
+                                                onClick = { isExpanded = !isExpanded },
+                                                modifier = Modifier.size(24.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                                                    contentDescription = null,
+                                                    tint = TextSecondary
+                                                )
+                                            }
+                                        }
+                                    }
+                                    
+                                    if (isExpanded) {
+                                        Column(modifier = Modifier.padding(start = 24.dp, top = 4.dp)) {
+                                            sources.forEach { source ->
+                                                Surface(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .clickable {
+                                                            activeSourceFilter = source.url
+                                                            activeCategoryFilter = null
+                                                            showFoldersBottomSheet = false
+                                                        },
+                                                    color = if (activeSourceFilter == source.url) {
+                                                        MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                                                    } else Color.Transparent,
+                                                    shape = RoundedCornerShape(8.dp)
+                                                ) {
+                                                    Row(
+                                                        modifier = Modifier.padding(8.dp),
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        Icon(Icons.Default.RssFeed, contentDescription = null, tint = TextSecondary, modifier = Modifier.size(16.dp))
+                                                        Spacer(modifier = Modifier.width(8.dp))
+                                                        Text(source.title, fontSize = 13.sp, color = TextPrimary)
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Uncategorized feeds
+                    val uncategorized = (categorized[null] ?: emptyList()) + (categorized[""] ?: emptyList())
+                    if (uncategorized.isNotEmpty()) {
+                        item {
+                            Text("UNCATEGORIZED", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = TextSecondary, modifier = Modifier.padding(vertical = 8.dp, horizontal = 12.dp))
+                        }
+                        items(uncategorized) { source ->
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        activeSourceFilter = source.url
+                                        activeCategoryFilter = null
+                                        showFoldersBottomSheet = false
+                                    },
+                                color = if (activeSourceFilter == source.url) {
+                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                                } else Color.Transparent,
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(Icons.Default.RssFeed, contentDescription = null, tint = TextSecondary)
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Text(source.title, fontWeight = FontWeight.Medium, color = TextPrimary)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Read RSS Article full details sliding-in fullscreen overlay (Feeder style)
+    selectedArticle?.let { article ->
+        Dialog(
+            onDismissRequest = { selectedArticle = null },
+            properties = DialogProperties(
+                usePlatformDefaultWidth = false,
+                decorFitsSystemWindows = false
+            )
+        ) {
+            var isVisible by remember { mutableStateOf(false) }
+            LaunchedEffect(Unit) {
+                isVisible = true
+            }
+
+            val dismissReader = {
+                coroutineScope.launch {
+                    isVisible = false
+                    delay(220) // wait for exit animation
+                    selectedArticle = null
+                }
+            }
+
+            androidx.activity.compose.BackHandler {
+                dismissReader()
+            }
+
+            AnimatedVisibility(
+                visible = isVisible,
+                enter = slideInHorizontally(initialOffsetX = { it }),
+                exit = slideOutHorizontally(targetOffsetX = { it }),
+                modifier = Modifier.fillMaxSize()
+            ) {
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .statusBarsPadding()
+                            .navigationBarsPadding()
+                            .padding(16.dp)
                     ) {
-                        Text("Close", color = DeepSpaceBackground)
+                        // Title/Action Bar
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            IconButton(onClick = { dismissReader() }) {
+                                Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = NeonCyan)
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "ARTICLE READER",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = NeonCyan
+                            )
+                        }
+                        
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        LazyColumn(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(16.dp)
+                        ) {
+                            item {
+                                Text(article.title, fontWeight = FontWeight.Bold, fontSize = 20.sp, color = TextPrimary, lineHeight = 26.sp)
+                            }
+                            item {
+                                Text(article.pubDate, fontSize = 12.sp, color = TextSecondary)
+                            }
+                            if (article.imageUrl != null) {
+                                item {
+                                    AsyncImage(
+                                        model = article.imageUrl,
+                                        contentDescription = "Image preview",
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(220.dp)
+                                            .clip(RoundedCornerShape(12.dp)),
+                                        contentScale = ContentScale.Crop
+                                    )
+                                }
+                            }
+                            item {
+                                Divider(color = TextSecondary.copy(alpha = 0.2f))
+                            }
+                            item {
+                                Text(article.description, fontSize = 15.sp, color = TextPrimary, lineHeight = 22.sp)
+                            }
+                        }
                     }
                 }
             }

@@ -76,7 +76,8 @@ fun MediaTab() {
     var musicSubView by remember { mutableStateOf(0) } // 0 = A-Z, 1 = Recently Added, 2 = Playlists
 
     // Media Viewer states
-    var selectedImageUri by remember { mutableStateOf<Uri?>(null) }
+    var activeFullscreenList by remember { mutableStateOf<List<MediaFile>>(emptyList()) }
+    var activeFullscreenIndex by remember { mutableStateOf(-1) }
     var selectedVideoUri by remember { mutableStateOf<Uri?>(null) }
     var activeAudioFile by remember { mutableStateOf<MediaFile?>(null) }
 
@@ -297,16 +298,19 @@ fun MediaTab() {
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .height(((photos.size + 2) / 3 * 110).dp), // dynamic height estimate
-                                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                            verticalArrangement = Arrangement.spacedBy(2.dp),
+                                            horizontalArrangement = Arrangement.spacedBy(2.dp),
                                             userScrollEnabled = false
                                         ) {
                                             items(photos) { photo ->
                                                 Box(
                                                     modifier = Modifier
                                                         .aspectRatio(1f)
-                                                        .clip(RoundedCornerShape(8.dp))
-                                                        .clickable { selectedImageUri = photo.uri }
+                                                        .clip(RoundedCornerShape(2.dp))
+                                                        .clickable { 
+                                                            activeFullscreenList = mediaFiles
+                                                            activeFullscreenIndex = mediaFiles.indexOf(photo)
+                                                        }
                                                 ) {
                                                     AsyncImage(
                                                         model = photo.uri,
@@ -395,30 +399,33 @@ fun MediaTab() {
                                 mediaFiles.filter { it.folder.equals("Camera", ignoreCase = true) }
                             }
                             LazyVerticalGrid(
-                                columns = GridCells.Fixed(3),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .weight(1f),
-                                contentPadding = PaddingValues(bottom = 80.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                items(cameraPhotos) { photo ->
-                                    Box(
-                                        modifier = Modifier
-                                            .aspectRatio(1f)
-                                            .clip(RoundedCornerShape(8.dp))
-                                            .clickable { selectedImageUri = photo.uri }
-                                    ) {
-                                        AsyncImage(
-                                            model = photo.uri,
-                                            contentDescription = photo.name,
-                                            contentScale = ContentScale.Crop,
-                                            modifier = Modifier.fillMaxSize()
-                                        )
-                                    }
-                                }
-                            }
+                                                columns = GridCells.Fixed(3),
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .weight(1f),
+                                                contentPadding = PaddingValues(bottom = 80.dp),
+                                                verticalArrangement = Arrangement.spacedBy(2.dp),
+                                                horizontalArrangement = Arrangement.spacedBy(2.dp)
+                                            ) {
+                                                items(cameraPhotos) { photo ->
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .aspectRatio(1f)
+                                                            .clip(RoundedCornerShape(2.dp))
+                                                            .clickable { 
+                                                                activeFullscreenList = cameraPhotos
+                                                                activeFullscreenIndex = cameraPhotos.indexOf(photo)
+                                                            }
+                                                    ) {
+                                                        AsyncImage(
+                                                            model = photo.uri,
+                                                            contentDescription = photo.name,
+                                                            contentScale = ContentScale.Crop,
+                                                            modifier = Modifier.fillMaxSize()
+                                                        )
+                                                    }
+                                                }
+                                            }
                         }
                     }
                 }
@@ -639,10 +646,10 @@ fun MediaTab() {
         )
     }
 
-    // Image fullscreen viewer
-    selectedImageUri?.let { uri ->
+    // Image fullscreen viewer with HorizontalPager swiping
+    if (activeFullscreenIndex >= 0 && activeFullscreenList.isNotEmpty()) {
         Dialog(
-            onDismissRequest = { selectedImageUri = null },
+            onDismissRequest = { activeFullscreenIndex = -1; activeFullscreenList = emptyList() },
             properties = DialogProperties(usePlatformDefaultWidth = false)
         ) {
             Box(
@@ -650,17 +657,31 @@ fun MediaTab() {
                     .fillMaxSize()
                     .background(Color.Black)
             ) {
-                AsyncImage(
-                    model = uri,
-                    contentDescription = "Fullscreen",
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .align(Alignment.Center),
-                    contentScale = ContentScale.Fit
-                )
+                key(activeFullscreenIndex, activeFullscreenList.size) {
+                    val pagerState = rememberPagerState(
+                        initialPage = activeFullscreenIndex,
+                        pageCount = { activeFullscreenList.size }
+                    )
+                    
+                    HorizontalPager(
+                        state = pagerState,
+                        modifier = Modifier.fillMaxSize(),
+                        pageSpacing = 16.dp
+                    ) { pageIndex ->
+                        val file = activeFullscreenList.getOrNull(pageIndex)
+                        if (file != null) {
+                            AsyncImage(
+                                model = file.uri,
+                                contentDescription = file.name,
+                                modifier = Modifier.fillMaxSize(),
+                                contentScale = ContentScale.Fit
+                            )
+                        }
+                    }
+                }
                 
                 IconButton(
-                    onClick = { selectedImageUri = null },
+                    onClick = { activeFullscreenIndex = -1; activeFullscreenList = emptyList() },
                     modifier = Modifier
                         .align(Alignment.TopStart)
                         .padding(16.dp)
@@ -710,19 +731,20 @@ fun MediaTab() {
                         modifier = Modifier
                             .fillMaxWidth()
                             .weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                        horizontalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
                         items(drilldownFiles) { file ->
                             Box(
                                 modifier = Modifier
                                     .aspectRatio(1f)
-                                    .clip(RoundedCornerShape(8.dp))
+                                    .clip(RoundedCornerShape(2.dp))
                                     .clickable {
                                         if (file.isVideo) {
                                             selectedVideoUri = file.uri
                                         } else {
-                                            selectedImageUri = file.uri
+                                            activeFullscreenList = drilldownFiles.filter { !it.isVideo }
+                                            activeFullscreenIndex = activeFullscreenList.indexOf(file)
                                         }
                                     }
                             ) {

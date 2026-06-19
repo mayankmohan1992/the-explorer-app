@@ -6,7 +6,8 @@ import androidx.room.*
 @Entity(tableName = "rss_sources")
 data class RssSource(
     @PrimaryKey val url: String,
-    val title: String
+    val title: String,
+    val category: String? = null
 )
 
 @Entity(
@@ -121,7 +122,7 @@ interface RssDao {
         Playlist::class,
         PlaylistSong::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
