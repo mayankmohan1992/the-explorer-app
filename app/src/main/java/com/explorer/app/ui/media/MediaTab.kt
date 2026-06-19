@@ -58,7 +58,7 @@ data class MediaFile(
     val dateAdded: Long = System.currentTimeMillis()
 )
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun MediaTab() {
     val context = LocalContext.current
